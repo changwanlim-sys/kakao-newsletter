@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# 설정 (API 키 포함 — 절대 커밋하지 마세요)
+config.json
+
+# 처리 완료 폴더
+kakao_done/
+
+# IDE
+.vscode/
+.idea/
+
+# 로컬 실행 전용 (Vercel에서 불필요)
+web_server.py
+run_*.bat
+setup.py
+newsletter_bot.py
+templates/

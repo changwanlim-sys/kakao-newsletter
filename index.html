@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📰 뉴스레터 AI 요약기</title>
+<meta name="description" content="신문/뉴스레터 이미지를 AI가 자동으로 읽고 정형 포맷으로 요약합니다.">
+<link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --card2: #22263a;
+    --accent: #4f8ef7;
+    --accent2: #7c3aed;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --border: #2d3148;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Pretendard', -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  header {
+    background: linear-gradient(135deg, #1a1d27, #22263a);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex; align-items: center; gap: 16px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  header .logo { font-size: 1.6rem; }
+  header h1 { font-size: 1.2rem; font-weight: 700; }
+  header p { font-size: 0.78rem; color: var(--muted); }
+  .api-badge {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font-size: 0.75rem;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); animation: pulse 2s infinite; }
+  .dot.ok { background: var(--green); }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.45} }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 28px 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media(max-width:860px){ .grid{ grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 22px;
+  }
+  .card-title {
+    font-size: 0.8rem; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em;
+    margin-bottom: 14px; display: flex; align-items: center; gap: 7px;
+  }
+
+  /* 업로드 */
+  .drop-zone {
+    border: 2px dashed var(--border); border-radius: 12px;
+    padding: 44px 20px; text-align: center; cursor: pointer;
+    transition: all .2s; background: var(--card2);
+  }
+  .drop-zone:hover, .drop-zone.over { border-color: var(--accent); background: rgba(79,142,247,.07); }
+  .drop-zone .ico { font-size: 2.8rem; margin-bottom: 10px; }
+  .drop-zone h3 { font-size: .95rem; font-weight: 600; margin-bottom: 5px; }
+  .drop-zone p { font-size: .8rem; color: var(--muted); }
+  #fileInput { display: none; }
+  #preview-wrap { margin-top: 14px; display: none; }
+  #preview-img { width: 100%; border-radius: 9px; border: 1px solid var(--border); }
+  #file-info { margin-top: 6px; font-size: .78rem; color: var(--muted); }
+
+  /* 버튼 */
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 12px 20px; border-radius: 9px; font-size: .88rem; font-weight: 600;
+    cursor: pointer; border: none; transition: all .18s; width: 100%; margin-top: 12px;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+  .btn-primary:hover { opacity: .86; transform: translateY(-1px); }
+  .btn-secondary { background: var(--card2); border: 1px solid var(--border); color: var(--text); }
+  .btn-secondary:hover { border-color: var(--accent); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important; }
+  .btn-copy { background: rgba(34,197,94,.12); border: 1px solid var(--green); color: var(--green); }
+  .btn-copy:hover { background: rgba(34,197,94,.22); }
+  .btn-sm { width: auto; padding: 6px 14px; font-size: .78rem; margin-top: 0; }
+
+  /* 결과 */
+  #result-box {
+    background: var(--card2); border-radius: 10px; padding: 18px;
+    min-height: 280px; font-size: .84rem; line-height: 1.78;
+    white-space: pre-line; border: 1px solid var(--border);
+    overflow-y: auto; max-height: 580px; color: var(--text);
+  }
+  #result-box.placeholder { color: var(--muted); font-style: italic; }
+
+  /* 파일 큐 */
+  .file-queue {
+    margin-top: 12px; display: none;
+    max-height: 200px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 9px;
+  }
+  .file-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 12px; font-size: .78rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .file-item:last-child { border-bottom: none; }
+  .file-item .fi-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--card2); display: flex; align-items: center; justify-content: center;
+    font-size: .7rem; font-weight: 700; color: var(--accent); flex-shrink: 0;
+  }
+  .file-item .fi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fi-status { font-size: .72rem; flex-shrink: 0; }
+  .fi-status.done { color: var(--green); }
+  .fi-status.processing { color: var(--yellow); }
+  .fi-status.waiting { color: var(--muted); }
+  .fi-status.err { color: var(--red); }
+
+  /* 진행률 바 */
+  .progress-wrap { margin-top: 10px; display: none; }
+  .progress-bar-bg {
+    height: 6px; background: var(--border); border-radius: 99px; overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 99px; transition: width .4s ease;
+    width: 0%;
+  }
+  .progress-label { font-size: .76rem; color: var(--muted); margin-top: 5px; }
+
+  /* API 키 모달 */
+  .modal-bg {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.75); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 28px; width: 440px; max-width: 90vw;
+  }
+  .modal h2 { font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
+  .modal p { font-size: .82rem; color: var(--muted); margin-bottom: 16px; line-height: 1.6; }
+  .modal input {
+    width: 100%; padding: 10px 14px;
+    background: var(--card2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: .875rem; margin-bottom: 12px;
+  }
+  .modal input:focus { outline: none; border-color: var(--accent); }
+
+  /* 로더 */
+  #loader { display: none; flex-direction: column; align-items: center; gap: 14px; padding: 40px; }
+  #loader.show { display: flex; }
+  .spinner {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 토스트 */
+  #toast {
+    position: fixed; bottom: 22px; right: 22px;
+    background: var(--card2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 12px 18px; font-size: .84rem;
+    opacity: 0; pointer-events: none; transform: translateY(10px);
+    transition: all .25s; z-index: 999;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.ok { border-color: var(--green); }
+  #toast.err { border-color: var(--red); }
+
+  /* 사용 안내 */
+  .guide {
+    background: rgba(79,142,247,.08); border: 1px solid rgba(79,142,247,.2);
+    border-radius: 10px; padding: 16px; margin-bottom: 20px; font-size: .82rem;
+    line-height: 1.7; color: var(--muted);
+  }
+  .guide strong { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📰</div>
+  <div>
+    <h1>뉴스레터 AI 요약기</h1>
+    <p>신문·뉴스레터 이미지 → AI 정형 포맷 자동 요약</p>
+  </div>
+  <div class="api-badge">
+    <div class="dot" id="api-dot"></div>
+    <span id="api-txt" style="color:var(--muted)">키 미설정</span>
+    <!-- AI 선택 토글 -->
+    <div style="display:flex;gap:4px;background:rgba(255,255,255,.06);border-radius:8px;padding:3px;">
+      <button id="btn-gemini" onclick="setAI('gemini')" style="border:none;padding:5px 11px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;background:var(--accent);color:#fff;">🔵 Gemini</button>
+      <button id="btn-openai" onclick="setAI('openai')" style="border:none;padding:5px 11px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;background:transparent;color:var(--muted);">🟢 OpenAI</button>
+      <button onclick="testAPIConnection()" style="border:none;padding:5px 11px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;background:#f59e0b;color:#000;margin-left:4px;">🔌 연결테스트</button>
+    </div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:0;" onclick="openKeyModal()">🔑 API 키 설정</button>
+  </div>
+  <!-- 버전 표시 -->
+  <div style="position:absolute;top:4px;right:8px;font-size:0.6rem;color:#6b7280;text-align:right;line-height:1.4;">
+    <div>이전: v2025.03.23 (PROMPT v2)</div>
+    <div style="color:#4f8ef7;">현재: v2026.03.24 (실시간표시+OCR+일시정지)</div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="guide">
+    <strong>사용 방법</strong>: ① API 키 설정 → ② 이미지 업로드 → ③ AI 요약 생성 → ④ 결과 복사 → ⑤ 카카오톡 붙여넣기<br>
+    API 키는 브라우저에 안전하게 저장됩니다 (서버 전송 없음). 
+    <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent);">Google AI Studio</a>에서 무료 발급 가능.
+  </div>
+
+  <div class="grid">
+
+    <!-- 왼쪽: 업로드 -->
+    <div class="card">
+      <div class="card-title">📤 이미지 업로드</div>
+
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div class="ico">🗞️</div>
+        <h3>클릭하거나 이미지를 드래그하세요</h3>
+        <p>JPG, PNG 또는 <strong style="color:var(--accent)">ZIP 압축파일</strong> · 최대 30개</p>
+        <input type="file" id="fileInput" accept="image/*,.zip" multiple onchange="handleFiles(event)">
+      </div>
+
+      <!-- 파일 큐 목록 -->
+      <div class="file-queue" id="fileQueue"></div>
+
+      <!-- 진행률 -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+        <div class="progress-label" id="progressLabel"></div>
+      </div>
+
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" id="analyze-btn" onclick="analyzeAll()" disabled style="flex:1">
+          ✨ AI 요약 생성
+        </button>
+        <button id="stop-btn"
+          style="flex:0 0 auto;width:auto;padding:12px 16px;display:none;
+                 border:none;border-radius:10px;font-size:0.9rem;font-weight:600;
+                 cursor:pointer;background:#f59e0b;color:#fff;transition:all .2s;"
+          onclick="togglePause()">
+          ⏸ 중단
+        </button>
+        <button class="btn btn-secondary" id="clear-btn" onclick="clearFiles()" disabled style="flex:0 0 auto;width:auto;padding:12px 14px;">
+          🗑 지우기
+        </button>
+      </div>
+
+    </div>
+
+
+    <!-- 오른쪽: 결과 -->
+    <div class="card">
+      <div class="card-title" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span>📋 요약 결과</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="copyResult()">📋 전체 복사</button>
+        </div>
+      </div>
+
+      <div id="loader">
+        <div class="spinner"></div>
+        <div id="loader-txt" style="color:var(--muted);font-size:.85rem;">AI가 이미지를 분석 중입니다…</div>
+      </div>
+
+      <div id="result-box" class="placeholder">이미지를 업로드하고 [AI 요약 생성]을 눌러주세요.
+
+─────────────────────────────
+생성 포맷 예시:
+
+&lt;2026년 3월20일 뉴스&gt;
+
+1. [경제/에너지] 원유 수급 비상…
+2. [증권/지수] 코스피 급등…
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+1. [경제/에너지] 원유 수급 비상…
+① 핵심: 정유업계 러시아산 도입 검토.
+② 포인트: 공급 충격은 물가로 전이.
+③ 시사점: 유가 변동성 구간 리스크 관리 필요.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- API 키 모달 -->
+<div class="modal-bg" id="keyModal">
+  <div class="modal">
+    <h2>🔑 API 키 설정</h2>
+    <p>API 키는 브라우저 localStorage에만 저장됩니다 (서버 전송 없음)</p>
+    <label style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px;">🔵 Gemini API 키 <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent);">발급</a></label>
+    <input type="password" id="key-gemini" placeholder="AIzaSy..." style="margin-bottom:12px;">
+    <label style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:4px;">🟢 OpenAI API 키 <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--accent);">발급</a></label>
+    <input type="password" id="key-openai" placeholder="sk-proj-..." style="margin-bottom:12px;">
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-primary" style="flex:1;margin-top:0;" onclick="saveKeys()">💾 저장</button>
+      <button class="btn btn-secondary" style="flex:1;margin-top:0;" onclick="closeKeyModal()">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- 토스트 -->
+<div id="toast"></div>
+
+<script>
+// ── AI 프롬프트 (옵션 A: 2단계 처리) ─────────────────────
+
+// ── 날짜 상수 (프롬프트보다 먼저 선언) ───────────────────────
+const TODAY = (() => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}.${m}.${day}`;
+})();
+const TODAY_KO = (() => {
+  const d = new Date();
+  return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일`;
+})();
+
+// ── [Phase 1] 이미지 → 기사 추출 전용 프롬프트 ──────────────
+// 각 이미지에서 기사만 추출 (번호·추천종목·날짜헤더 불필요)
+const PROMPT_EXTRACT = `당신은 경제·시사 뉴스레터 기사 추출 전문가입니다.
+첨부 이미지(신문/뉴스레터 스캔본)의 모든 기사를 읽고
+번호 없이 아래 형식만으로 출력하세요.
+
+⛔ 금지: 추천 종목 섹션 출력 금지. 날짜 헤더 출력 금지.
+   번호 매기기 금지. 형식 설명·지시문 출력 금지.
+
+각 기사마다 아래 형식으로만 출력:
+
+[분야/세부분야] 기사 제목 (기사 속 핵심 수치·사실 포함한 완전한 문장)
+①핵심: 기사에서 실제 언급된 수치·인물명·기관명·날짜를 포함해 완전한 한 문장으로 작성.
+②포인트: 구체적 데이터·퍼센트·금액·규모를 근거로 시장·경제 포인트를 완전한 한 문장으로 작성.
+③시사점: 투자·생활·판단에 직결되는 구체적 인사이트를 완전한 한 문장으로 작성.
+---
+
+[분야/세부분야] 다음 기사 제목
+①핵심: ...
+②포인트: ...
+③시사점: ...
+---
+
+(이미지 속 모든 기사 동일 형식으로 반복)
+
+✅ ①②③ 반드시 기사 속 실제 수치(%, 원, 달러, 배, 명), 인물명·기관명 포함
+✅ "~하고 있다" "~할 예정이다" 식 막연한 서술 금지
+✅ 이미지의 모든 기사 빠짐없이 추출 / 전체 한국어`;
+
+// ── [Phase 2] 전체 통합·재정리 프롬프트 (텍스트 전용) ────────
+const PROMPT_CONSOLIDATE = `당신은 경제·시사 뉴스레터 전문 에디터입니다.
+아래 기사 목록은 여러 이미지에서 추출된 결과로, 각 이미지 결과는 "---"로 구분됩니다.
+
+🚨 절대 규칙:
+1. [SPECIAL_SUMMARY]...[/SPECIAL_SUMMARY] 마커가 포함된 섹션은 특수 이미지입니다.
+   - 이 섹션은 목차/본문 카운트에서 제외합니다.
+   - 해당 내용은 "📌 오늘 뉴스 이것만 확인하자!" 섹션에 그대로 넣습니다.
+2. "---" 구분자 기준으로 일반 이미지 섹션 수 = N개
+   - 목차: 정확히 N줄 (각 섹션당 1줄)
+   - 본문 상세: 정확히 N개 블록
+   - N 초과 또는 미만 절대 금지
+
+⛔ 금지:
+- 기사 목록에 없는 기사 추가 금지
+- 목차를 긴 문장으로 작성 금지 (7단어 이내 한 줄)
+- 지시문·설명·형식 외 텍스트 출력 금지
+
+✅ 출력 형식 (반드시 이 순서):
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 오늘의 추천 종목 (${TODAY})
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+[기사 중 투자 근거가 명확한 종목 최대 3개 — 없으면 "오늘 기사에서 명확한 추천 종목 없음" 1줄]
+
+① 실제 회사명 (종목코드·국내/미국) ★★★
+[참조기사 15, #반도체/경제 · 하이닉스, 美서 15조 확보]
+→ 추천 핵심 이유 (구체적 수치·사실 포함)
+  근거 두 번째 줄
+
+② 실제 회사명 (종목코드·국내/미국) ★★☆
+[참조기사 8, #경제/자동차 · 하이브리드 판매 500만대 돌파]
+→ 추천 핵심 이유
+  근거 두 번째 줄
+
+③ 실제 회사명 (종목코드·국내/미국) ★★☆
+[참조기사 10, #경제/기술 · 젠슨 황 발언 광통신주 急등]
+→ 추천 핵심 이유
+
+⚠️ 위 예시는 형식 참고용. [참조기사 번호, #분야/세부 · 실제 기사 제목]에서
+   번호는 아래 목차의 기사 일련번호와 반드시 일치해야 함.
+
+⛔⛔ [조건부 섹션 — 입력에 [WEATHER_SUMMARY]...[/WEATHER_SUMMARY] 마커가 있을 때만 출력 ⛔⛔
+[WEATHER_SUMMARY] 마커가 없으면 이 섹션 전체(헤더 포함)를 완전 생략. 있을 때만 아래 출력:
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌤 오늘의 날씨
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+(날씨 핵심 요약 2줄 이내 — 이미지에서 추출한 기온·날씨·특이사항)
+
+⛔⛔ [조건부 섹션 — 입력에 [SPECIAL_SUMMARY]...[/SPECIAL_SUMMARY] 마커가 있을 때만 출력 ⛔⛔
+만약 입력 기사 목록에 [SPECIAL_SUMMARY] 마커가 전혀 없으면:
+→ 아래 헤더와 구분선을 포함하여 이 섹션 전체를 출력하지 마세요. 완전히 건너뛰세요.
+
+[SPECIAL_SUMMARY] 마커가 있을 때만 아래를 출력:
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 오늘 뉴스 이것만 확인하자!
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+(OCR로 읽은 원문 항목을 아래 형식으로만 나열)
+- [분야] 기사 제목 (이미지 원문 그대로)
+- [정치] 강남 용산 청약 땐 "주택채권" 의무 매입 추진
+⛔ 해석·요약·의견 추가 절대 금지 — 이미지 원문만
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+<YYYY년 M월D일 뉴스>
+
+1. [분야] 핵심 키워드 (7단어 이내, 한 줄)
+2. [분야] 핵심 키워드 (7단어 이내, 한 줄)
+... (정확히 N줄)
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+1. [분야] 목차와 동일한 제목
+①핵심: 실제 수치·인물·기관·날짜 포함 완전한 한 문장.
+②포인트: 구체적 데이터·퍼센트·금액 근거로 한 문장.
+③시사점: 투자·생활 직결 인사이트 한 문장.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+... (정확히 N개 — 목차와 반드시 일치)
+
+✅ 전체 한국어 작성
+✅ 분야태그: [정치][경제][금융][증권][기업][국제][생활][기술]+/세부
+
+[기사 목록 — "---"로 이미지 구분]
+`;
+
+// 하위 호환용
+const SUMMARY_PROMPT = PROMPT_EXTRACT;
+
+
+
+
+
+
+
+
+
+// ── 상태 ────────────────────────────────────────────
+let currentAI = localStorage.getItem("selected_ai") || "gemini"; // 'gemini' | 'openai'
+
+// ── AI 선택 토글 ──────────────────────────────────────────
+function setAI(ai) {
+  currentAI = ai;
+  localStorage.setItem("selected_ai", ai);
+  const btnG = document.getElementById("btn-gemini");
+  const btnO = document.getElementById("btn-openai");
+  if (ai === "gemini") {
+    btnG.style.background = "var(--accent)"; btnG.style.color = "#fff";
+    btnO.style.background = "transparent";   btnO.style.color = "var(--muted)";
+  } else {
+    btnO.style.background = "#22c55e";       btnO.style.color = "#fff";
+    btnG.style.background = "transparent";   btnG.style.color = "var(--muted)";
+  }
+  updateKeyStatus();
+}
+
+// ── 키 관리 ──────────────────────────────────────────────
+function getGeminiKey() { return localStorage.getItem("gemini_api_key") || ""; }
+function getOpenAIKey() { return localStorage.getItem("openai_api_key") || ""; }
+function getActiveKey() { return currentAI === "openai" ? getOpenAIKey() : getGeminiKey(); }
+
+function updateKeyStatus() {
+  const k = getActiveKey();
+  const dot = document.getElementById("api-dot");
+  const txt = document.getElementById("api-txt");
+  const label = currentAI === "openai" ? "OpenAI" : "Gemini";
+  if (k) { dot.className = "dot ok"; txt.textContent = label + " 연결됨"; }
+  else    { dot.className = "dot";    txt.textContent = label + " 키 미설정"; }
+}
+
+// ── API 키 모달 ──────────────────────────────────────────
+function openKeyModal() {
+  document.getElementById("key-gemini").value = getGeminiKey();
+  document.getElementById("key-openai").value = getOpenAIKey();
+  document.getElementById("keyModal").classList.add("show");
+}
+function closeKeyModal() { document.getElementById("keyModal").classList.remove("show"); }
+function saveKeys() {
+  const gk = document.getElementById("key-gemini").value.trim();
+  const ok = document.getElementById("key-openai").value.trim();
+  if (gk) localStorage.setItem("gemini_api_key", gk);
+  if (ok) localStorage.setItem("openai_api_key", ok);
+  closeKeyModal();
+  updateKeyStatus();
+  toast("✅ API 키 저장됨", "ok");
+}
+
+// ── 파일 큐 상태 ──────────────────────────────────────────
+let fileQueue = [];   // { name, b64, mimeType }[]
+let currentResult = "";
+
+// ── 파일 추가 처리 (input change 이벤트) ─────────────────
+async function handleFiles(e) {
+  const files = Array.from(e.target.files);
+  await addFilesToQueue(files);
+  e.target.value = ""; // 동일 파일 재선택 허용
+}
+
+// ── 파일 추가 처리 (드래그 앤 드롭) ─────────────────────
+const dz = document.getElementById("dropZone");
+dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("over"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("over"));
+dz.addEventListener("drop", async e => {
+  e.preventDefault(); dz.classList.remove("over");
+  const files = Array.from(e.dataTransfer.files);
+  await addFilesToQueue(files);
+});
+
+// ── 파일 큐에 파일 추가 (이미지 OR ZIP) ─────────────────
+async function addFilesToQueue(files) {
+  for (const file of files) {
+    if (file.name.toLowerCase().endsWith(".zip")) {
+      toast("📦 ZIP 압축 해제 중…", "");
+      try {
+        const zip = await JSZip.loadAsync(file);
+        const imgExts = /\.(jpg|jpeg|png|gif|webp)$/i;
+        const entries = Object.entries(zip.files)
+          .filter(([n, f]) => !f.dir && imgExts.test(n))
+          .sort(([a], [b]) => a.localeCompare(b));
+        for (const [name, entry] of entries) {
+          const blob = await entry.async("blob");
+          const mimeType = name.match(/\.png$/i) ? "image/png" : "image/jpeg";
+          const b64 = await blobToBase64(blob);
+          fileQueue.push({ name, b64, mimeType });
+        }
+        toast(`✅ ZIP에서 ${entries.length}개 이미지 추출됨`, "ok");
+      } catch (err) {
+        toast("❌ ZIP 해제 실패: " + err.message, "err");
+      }
+    } else if (file.type.startsWith("image/")) {
+      if (fileQueue.length >= 30) { toast("⚠️ 최대 30개까지 가능합니다.", "err"); break; }
+      const b64 = await fileToBase64(file);
+      fileQueue.push({ name: file.name, b64, mimeType: file.type || "image/jpeg" });
+    }
+  }
+  if (fileQueue.length > 30) fileQueue = fileQueue.slice(0, 30);
+  renderQueue();
+}
+
+// ── 큐 목록 렌더링 ────────────────────────────────────────
+function renderQueue(statuses = []) {
+  const el = document.getElementById("fileQueue");
+  if (!fileQueue.length) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.innerHTML = fileQueue.map((f, i) => {
+    const s = statuses[i] || "waiting";
+    const icon = s === "done" ? "✅" : s === "processing" ? "⏳" : s === "err" ? "❌" : "○";
+    const cls = s;
+    return `<div class="file-item">
+      <div class="fi-num">${i+1}</div>
+      <div class="fi-name">${f.name}</div>
+      <span class="fi-status ${cls}">${icon}</span>
+    </div>`;
+  }).join("");
+  document.getElementById("analyze-btn").disabled = false;
+  document.getElementById("clear-btn").disabled = false;
+}
+
+// ── 큐 초기화 ─────────────────────────────────────────────
+function clearFiles() {
+  fileQueue = [];
+  currentResult = "";
+  renderQueue();
+  document.getElementById("progressWrap").style.display = "none";
+  document.getElementById("result-box").className = "placeholder";
+  document.getElementById("result-box").textContent = "이미지를 업로드하고 [AI 요약 생성]을 눌러주세요.";
+  document.getElementById("analyze-btn").disabled = true;
+  document.getElementById("clear-btn").disabled = true;
+}
+
+// ── 중단 제어 ─────────────────────────────────────────────
+let abortController = null;
+let isPaused = false;
+let resumeResolve = null;  // 일시정지 해제 시 호출할 함수
+
+// ── 일시정지 대기 함수 ─────────────────────
+async function waitIfPaused() {
+  if (isPaused) {
+    await new Promise(resolve => { resumeResolve = resolve; });
+  }
+}
+
+// ── 중단/재개 토글 버튼 ────────────────────
+function togglePause() {
+  const btn = document.getElementById('stop-btn');
+  const loader = document.getElementById('loader');
+  if (!isPaused) {
+    // → 일시정지
+    isPaused = true;
+    btn.textContent = '▶ 진행';
+    btn.style.background = '#22c55e';
+    if (loader) loader.classList.remove('show'); // 스피너 정지
+    toast('⏸ 분석 일시정지. [진행] 버튼으로 재개합니다.', '');
+  } else {
+    // → 재개
+    isPaused = false;
+    btn.textContent = '⏸ 중단';
+    btn.style.background = '#f59e0b';
+    if (loader) loader.classList.add('show'); // 스피너 재시작
+    if (resumeResolve) { resumeResolve(); resumeResolve = null; }
+    toast('▶ 분석을 재개합니다...', 'success');
+  }
+}
+
+// ── 분석 완전 중단 ────────────────────────────
+function stopAnalysis() {
+  isPaused = false;
+  if (resumeResolve) { resumeResolve(); resumeResolve = null; }
+  if (abortController) { abortController.abort(); }
+  toast("🛑 분석을 중단했습니다.", "");
+}
+
+// ── 분석 종료 후 UI 복원 ──────────────────────────────────
+function finishAnalysis(btn, cbtn, loader, stopBtn) {
+  loader.classList.remove("show");
+  btn.disabled = false;
+  cbtn.disabled = false;
+  stopBtn.style.display = "none";
+  abortController = null;
+}
+
+// ── 전체 순차 분석 (2단계: Phase1 이미지 추출 → Phase2 텍스트 통합) ──
+async function analyzeAll() {
+  if (!fileQueue.length) return;
+
+  // ★ 핵심 수정: 분석 시작 시 isPaused 초기화 (이전 세션 상태 리셋)
+  isPaused = false;
+  if (resumeResolve) { resumeResolve(); resumeResolve = null; }
+  abortController = new AbortController();
+  const signal = abortController.signal;
+
+  const btn     = document.getElementById("analyze-btn");
+  const cbtn    = document.getElementById("clear-btn");
+  const stopBtn = document.getElementById("stop-btn");
+  const loader  = document.getElementById("loader");
+  const ltxt    = document.getElementById("loader-txt");
+  const box     = document.getElementById("result-box");
+  const pw      = document.getElementById("progressWrap");
+  const pf      = document.getElementById("progressFill");
+  const pl      = document.getElementById("progressLabel");
+
+  btn.disabled = true; cbtn.disabled = true;
+  stopBtn.style.display = "inline-flex";
+  loader.classList.add("show");
+  pw.style.display = "block";
+  pf.style.width = "0%";
+  currentResult = "";
+  box.style.display = "";
+  box.className = "";
+  box.textContent = "⏳ Phase 1: 각 이미지에서 기사를 추출하고 있습니다…\n";
+
+  const total = fileQueue.length;
+  const statuses = new Array(total).fill("waiting");
+  const extractedParts = []; // Phase1 결과 모음
+
+  // ═══════════════════════════════════════════
+  // Phase 1: 이미지 → 기사 추출 (스트리밍)
+  // ═══════════════════════════════════════════
+  for (let i = 0; i < total; i++) {
+    if (signal.aborted) break;
+
+    const f = fileQueue[i];
+    statuses[i] = "processing";
+    renderQueue([...statuses]);
+    ltxt.textContent = `[Phase 1] (${i+1}/${total}) ${f.name} 기사 추출 중…`;
+    pl.textContent   = `추출 ${i+1} / ${total}`;
+    // Phase1: 0~80% 범위 사용
+    pf.style.width   = `${Math.round(i / total * 80)}%`;
+
+    let partText = "";
+    const onChunk = (text) => {
+      partText += text;
+      // Phase1 중간 진행 표시 (전체 누적 아님)
+      box.textContent = `⏳ Phase 1: 각 이미지에서 기사를 추출하고 있습니다…\n\n` +
+        `처리 완료: ${i}개 / ${total}개\n` +
+        `현재 처리 중: [${i+1}] ${f.name}\n\n` +
+        `지금까지 추출된 기사 수: 약 ${extractedParts.reduce((s,p) => s + (p.split("---").length), 0) + partText.split("---").length}건`;
+      box.scrollTop = box.scrollHeight;
+    };
+
+    
+    await waitIfPaused(); // ⏸ 일시정지 대기
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      if (signal.aborted) break;
+      try {
+        if (currentAI === "openai") {
+          const key = getOpenAIKey();
+          if (!key) { openKeyModal(); break; }
+          await Promise.race([
+            callOpenAIStream(key, f.b64, f.mimeType, PROMPT_EXTRACT, onChunk, signal),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('OpenAI 30s timeout')), 30000))
+          ])
+        } else {
+          const key = getGeminiKey();
+          if (!key) { openKeyModal(); break; }
+          try {
+            await Promise.race([
+            callGeminiStream(key, f.b64, f.mimeType, PROMPT_EXTRACT, onChunk, signal),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('Gemini 30s timeout')), 30000))
+          ])
+          } catch (gErr) {
+            const oKey = getOpenAIKey();
+            if (oKey && (gErr.message.includes("429") || gErr.message.includes("quota") || gErr.message.includes("RESOURCE_EXHAUSTED"))) {
+              ltxt.textContent = "Gemini 한도 초과 → OpenAI로 전환…";
+              toast("⚠️ Gemini 한도 초과, OpenAI로 전환합니다.", "");
+              await Promise.race([
+                callOpenAIStream(oKey, f.b64, f.mimeType, PROMPT_EXTRACT, onChunk, signal),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('OpenAI fallback 30s timeout')), 30000))
+              ]);
+              setAI("openai");
+            } else throw gErr;
+          }
+        }
+        break;
+      } catch (retryErr) {
+        // 오류 메시지를 화면에 즉시 표시
+        box.textContent = `⚠️ 이미지 ${i+1}/${total} 오류: ${retryErr.message}\n재시도 중 (${attempt+1}/3)...\n\n` + extractedParts.join('\n\n---\n\n');
+        box.scrollTop = box.scrollHeight;
+        console.error('[Phase1 Error]', retryErr);
+        if (retryErr.name === "AbortError") throw retryErr;
+        if (attempt < 2) {
+          ltxt.textContent = `재시도 중… (${attempt+1}/2)`;
+          await sleep(3000 * (attempt + 1));
+        } else {
+          partText += `\n[❌ 오류: ${f.name} - ${retryErr.message}]\n---\n`;
+        }
+      }
+    }
+
+    if (signal.aborted) {
+      statuses[i] = "err";
+      renderQueue([...statuses]);
+      pl.textContent = "⛔ 중단됨";
+      finishAnalysis(btn, cbtn, loader, stopBtn);
+      return;
+    }
+
+    extractedParts.push(partText.trim());
+        // ── 실시간 누적 표시 ──
+        const _isSpecial = partText.includes('[SPECIAL_SUMMARY]');
+        box.textContent = `✅ ${extractedParts.length}/${total}장 분석됨${_isSpecial ? ' [📌 특수 이미지 감지]' : ''}\n\n` + extractedParts.join('\n\n---\n\n');
+        box.scrollTop = box.scrollHeight;
+    statuses[i] = "done";
+    renderQueue([...statuses]);
+    if (i < total - 1 && !signal.aborted) await sleep(1500);
+  }
+
+  if (signal.aborted) {
+    pl.textContent = "⛔ 중단됨";
+    finishAnalysis(btn, cbtn, loader, stopBtn);
+    return;
+  }
+
+  // ═══════════════════════════════════════════
+  // Phase 2: 전체 통합 재정리 (텍스트 전용)
+  // ═══════════════════════════════════════════
+  pf.style.width = "85%";
+  pl.textContent = "🔄 Phase 2: 전체 통합 중…";
+  ltxt.textContent = "모든 기사를 통합하여 최종 뉴스레터를 생성하고 있습니다…";
+  box.textContent = "🔄 Phase 2: 30개 이미지에서 추출된 기사를 하나로 통합 재정리 중입니다…\n잠시만 기다려주세요.";
+  toast("🔄 Phase 2: 기사 통합 및 추천 종목 선정 중…", "");
+
+  const allExtracted = extractedParts.join("\n\n---\n\n");
+  const consolidatePrompt = PROMPT_CONSOLIDATE + allExtracted;
+
+  currentResult = "";
+  const onFinalChunk = (text) => {
+    currentResult += text;
+    box.textContent = currentResult;
+    box.scrollTop = box.scrollHeight;
+  };
+
+  try {
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      if (signal.aborted) break;
+      try {
+        if (currentAI === "openai") {
+          const key = getOpenAIKey();
+          if (!key) { openKeyModal(); break; }
+          await callOpenAITextStream(key, consolidatePrompt, onFinalChunk, signal);
+        } else {
+          const key = getGeminiKey();
+          if (!key) { openKeyModal(); break; }
+          try {
+            await callGeminiTextStream(key, consolidatePrompt, onFinalChunk, signal);
+          } catch (gErr) {
+            const oKey = getOpenAIKey();
+            if (oKey && (gErr.message.includes("429") || gErr.message.includes("quota") || gErr.message.includes("RESOURCE_EXHAUSTED"))) {
+              ltxt.textContent = "Gemini 한도 초과 → OpenAI로 전환…";
+              toast("⚠️ Gemini 한도 초과, OpenAI로 전환합니다.", "");
+              await callOpenAITextStream(oKey, consolidatePrompt, onFinalChunk, signal);
+              setAI("openai");
+            } else throw gErr;
+          }
+        }
+        break;
+      } catch (retryErr) {
+        if (retryErr.name === "AbortError") throw retryErr;
+        if (attempt < 2) {
+          ltxt.textContent = `Phase 2 재시도 중… (${attempt+1}/2)`;
+          await sleep(3000 * (attempt + 1));
+        } else throw retryErr;
+      }
+    }
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      currentResult += `\n[❌ Phase 2 통합 오류] ${err.message}\n`;
+      box.textContent = currentResult;
+    }
+  }
+
+  pf.style.width = "100%";
+  pl.textContent = signal.aborted ? "⛔ 중단됨" : `✅ 완료 (${total}개 이미지 → 통합 뉴스레터)`;
+  finishAnalysis(btn, cbtn, loader, stopBtn);
+  if (!signal.aborted) toast(`✅ ${total}개 이미지 통합 뉴스레터 완성!`, "ok");
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Gemini 텍스트 전용 스트리밍 (Phase 2 통합용) ──────────────
+async function callGeminiTextStream(apiKey, prompt, onChunk, signal) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?key=${apiKey}&alt=sse`;
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: 16384 }
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || "Gemini API 오류 " + res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data);
+        const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (text && onChunk) onChunk(text);
+      } catch {}
+    }
+  }
+}
+
+// ── OpenAI 텍스트 전용 스트리밍 (Phase 2 통합용) ─────────────
+async function callOpenAITextStream(apiKey, prompt, onChunk, signal) {
+  const url = "https://api.openai.com/v1/chat/completions";
+  const body = {
+    model: "gpt-4o",
+    stream: true,
+    messages: [
+      { role: "system", content: "당신은 경제·시사 뉴스레터 전문 에디터입니다. 입력된 기사 목록을 지정된 형식으로 정리하세요." },
+      { role: "user", content: prompt }
+    ],
+    max_tokens: 8192,
+    temperature: 0.3
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || "OpenAI API 오류 " + res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data);
+        const text = json.choices?.[0]?.delta?.content || "";
+        if (text && onChunk) onChunk(text);
+      } catch {}
+    }
+  }
+}
+
+
+
+// ── Gemini 스트리밍 호출 (SSE) ─────────────────────────────
+async function callGeminiStream(apiKey, b64, mimeType, prompt = SUMMARY_PROMPT, onChunk, signal) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:streamGenerateContent?key=${apiKey}&alt=sse`;
+  const body = {
+    contents: [{ role: "user", parts: [
+      { text: prompt },
+      { inline_data: { mime_type: mimeType, data: b64 } }
+    ]}],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || "Gemini API 오류 " + res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data);
+        const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (text && onChunk) onChunk(text);
+      } catch {}
+    }
+  }
+}
+
+// ── OpenAI 스트리밍 호출 (SSE) ─────────────────────────────
+async function callOpenAIStream(apiKey, b64, mimeType, prompt = SUMMARY_PROMPT, onChunk, signal) {
+  const compressed = await resizeImage(b64, mimeType, 1024, 0.85);
+  const url = "https://api.openai.com/v1/chat/completions";
+  const body = {
+    model: "gpt-4o",
+    stream: true,
+    messages: [
+      {
+        role: "system",
+        content: "You are a Korean newspaper/newsletter summarizer. You MUST read all text visible in the image and produce a structured Korean summary. Never say you cannot read text from images — always extract and summarize ALL visible text."
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "[중요] 이미지 속 신문/뉴스레터의 모든 기사 텍스트를 읽고 아래 형식으로 요약하세요.\n\n" + prompt },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${compressed}`, detail: "high" } }
+        ]
+      }
+    ],
+    max_tokens: 4096,
+    temperature: 0.3
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || "OpenAI API 오류 " + res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data);
+        const text = json.choices?.[0]?.delta?.content || "";
+        if (text && onChunk) onChunk(text);
+      } catch {}
+    }
+  }
+}
+
+
+
+
+// ── Gemini Vision 호출 ────────────────────────────────────
+async function callGemini(apiKey, b64, mimeType, prompt = SUMMARY_PROMPT) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`;
+  const body = {
+    contents: [{ role: "user", parts: [
+      { text: prompt },
+      { inline_data: { mime_type: mimeType, data: b64 } }
+    ]}],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
+  };
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "Gemini API 오류 " + res.status);
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// ── OpenAI GPT-4o Vision 호출 ─────────────────────────────
+async function callOpenAI(apiKey, b64, mimeType, prompt = SUMMARY_PROMPT) {
+  // 이미지 압축 (최대 1024px)
+  const compressed = await resizeImage(b64, mimeType, 1024, 0.85);
+  const url = "https://api.openai.com/v1/chat/completions";
+  const body = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content: "You are a Korean newspaper/newsletter summarizer. You MUST read all text visible in the image and produce a structured Korean summary. Never say you cannot read text from images — always extract and summarize ALL visible text."
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "[중요] 이미지 속 신문/뉴스레터의 모든 기사 텍스트를 읽고 아래 형식으로 요약하세요.\n\n" + prompt },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${compressed}`, detail: "high" } }
+        ]
+      }
+    ],
+    max_tokens: 4096,
+    temperature: 0.3
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "OpenAI API 오류 " + res.status);
+  return data.choices?.[0]?.message?.content || "";
+}
+
+// ── 이미지 → base64 (원본) ───────────────────────────────
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result.split(",")[1]);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+// ── Blob → base64 (ZIP 내부 파일용) ─────────────────────
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result.split(",")[1]);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+
+// ── 이미지 리사이즈 + 압축 (Canvas) ─────────────────────────
+function resizeImage(b64, mimeType, maxPx, quality) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w > maxPx || h > maxPx) {
+        if (w > h) { h = Math.round(h * maxPx / w); w = maxPx; }
+        else       { w = Math.round(w * maxPx / h); h = maxPx; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      const out = canvas.toDataURL("image/jpeg", quality).split(",")[1];
+      resolve(out);
+    };
+    img.src = `data:${mimeType};base64,${b64}`;
+  });
+}
+
+// ── 결과 복사 ─────────────────────────────────────────────
+function copyResult() {
+  if (!currentResult) { toast("요약 결과가 없습니다.", "err"); return; }
+  navigator.clipboard.writeText(currentResult)
+    .then(() => toast("📋 클립보드에 복사됨! 카카오톡에 Ctrl+V 로 붙여넣기하세요.", "ok"))
+    .catch(() => {
+      const ta = document.createElement("textarea");
+      ta.value = currentResult;
+      document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy");
+      document.body.removeChild(ta);
+      toast("📋 복사됨!", "ok");
+    });
+}
+
+// ── 토스트 ────────────────────────────────────────────────
+let _tt;
+function toast(msg, type = "") {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "show " + (type || "");
+  clearTimeout(_tt);
+  _tt = setTimeout(() => el.className = "", 3500);
+}
+
+// ── 초기화 ─────────────────────────────────────────────────
+setAI(currentAI);
+updateKeyStatus();
+if (!getGeminiKey() && !getOpenAIKey()) setTimeout(openKeyModal, 600);
+
+
+
+
+
+// ── API 연결 테스트 ─────────────────────────────────
+async function testAPIConnection() {
+  const key = currentAI === 'openai' ? getOpenAIKey() : getGeminiKey();
+  if (!key) { toast('API 키를 먼저 입력하세요.', 'error'); return; }
+  const box = document.getElementById('result-box');
+  box.textContent = 'API 연결 테스트 중...';
+  box.style.display = '';
+  try {
+    if (currentAI === 'openai') {
+      const res = await Promise.race([
+        fetch('https://api.openai.com/v1/models', {
+          headers: { 'Authorization': 'Bearer ' + key }
+        }),
+        new Promise(function(_, r){ setTimeout(function(){ r(new Error('Timeout')); }, 10000); })
+      ]);
+      const data = await res.json();
+      if (res.ok) {
+        box.textContent = 'OpenAI 연결 성공! (' + (data.data ? data.data.length : '?') + '개 모델)\n크레딧 정상이면 분석이 가능합니다.';
+        toast('OpenAI 연결 성공!', 'success');
+      } else {
+        var msg = data.error ? (data.error.code + ': ' + data.error.message) : JSON.stringify(data);
+        box.textContent = 'OpenAI 오류 [' + res.status + ']\n' + msg + '\n' +
+          (res.status === 401 ? '→ API 키 오류' : res.status === 429 ? '→ 크레딧 부족 또는 요금 한도 초과' : '');
+        toast('OpenAI ' + res.status + ' 오류', 'error');
+      }
+    } else {
+      var url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + key;
+      const res = await Promise.race([
+        fetch(url),
+        new Promise(function(_, r){ setTimeout(function(){ r(new Error('Timeout')); }, 10000); })
+      ]);
+      const data = await res.json();
+      if (res.ok) {
+        box.textContent = 'Gemini 연결 성공! ' + (data.models ? data.models.length : '?') + '개 모델 사용 가능';
+        toast('Gemini 연결 성공!', 'success');
+      } else {
+        box.textContent = 'Gemini 오류 [' + res.status + ']\n' + JSON.stringify(data.error || data);
+        toast('Gemini ' + res.status + ' 오류', 'error');
+      }
+    }
+  } catch(e) {
+    box.textContent = '연결 실패: ' + e.message;
+    toast('연결 실패: ' + e.message, 'error');
+  }
+}
+</script>
+</body>
+</html>
